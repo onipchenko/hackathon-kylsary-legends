@@ -1,83 +1,92 @@
-# app/services/llm_service.py
 import os
 import json
+import re
 import google.generativeai as genai
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Настройка Google Gemini
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 genai.configure(api_key=GOOGLE_API_KEY)
 
-# Используем быструю и бесплатную модель
-# Можно поменять на "gemini-2.0-flash-exp", если хотите самую новую
+# Используем модель (flash-latest быстрая и поддерживает большие контексты)
 model = genai.GenerativeModel("gemini-2.5-pro")
 
 async def generate_answer(user_query: str, context_chunks: list):
     """
-    Генерация ответа через Google Gemini API (Напрямую)
+    Генерация ответа через Google Gemini API
     """
     
-    # Собираем текстовый контекст
-    context_text = "\n---\n".join([item['content'] for item in context_chunks])
+    # Формируем контекст с ID вузов
+    formatted_chunks = []
+    for item in context_chunks:
+        # Теперь, после обновления SQL, item['university_id'] будет числом
+        u_id = item.get('university_id')
+        uni_tag = f"[ID ВУЗА: {u_id}]" if u_id else ""
+        formatted_chunks.append(f"{item['content']} {uni_tag}")
+
+    context_text = "\n---\n".join(formatted_chunks)
     
-    # Системный промпт интегрируем в сообщение, т.к. у Gemini 1.5 немного другая структура ролей,
-    # но самый надежный способ - просто склеить всё в один текст.
+    # Для отладки в консоли
+    print(f"DEBUG: Context IDs found: {[item.get('university_id') for item in context_chunks]}")
     
     full_prompt = f"""
-    ТЫ — ИНТЕЛЛЕКТУАЛЬНЫЙ АССИСТЕНТ DataHub ПО ВУЗАМ КАЗАХСТАНА.
+    ТЫ — АССИСТЕНТ DataHub. 
     
     ТВОЯ ЗАДАЧА:
-    1. Ответить на вопрос пользователя, используя ИСКЛЮЧИТЕЛЬНО предоставленный ниже контекст.
-    2. Если пользователь спрашивает про подбор вуза, предложи варианты из контекста.
-    3. В конце ответа ОБЯЗАТЕЛЬНО добавь JSON-блок с ID вузов.
+    1. Ответь на вопрос пользователя, используя контекст.
+    2. Если рекомендуешь вуз, посмотри, какой [ID ВУЗА: X] написан рядом с ним в тексте контекста.
+    3. Добавь эти ID в список highlight_ids.
 
-    КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:
+    КОНТЕКСТ:
     {context_text}
     
-    ВОПРОС ПОЛЬЗОВАТЕЛЯ:
+    ВОПРОС:
     {user_query}
     
-    ФОРМАТ ОТВЕТА (Строго соблюдай этот формат):
-    [Твой вежливый и полезный ответ текстом здесь...]
+    ФОРМАТ ОТВЕТА (СТРОГО):
+    [Твой текст ответа]
     
-    !!!JSON_START!!!
+    ```json
     {{
       "highlight_ids": [1, 5],
       "filters": {{"city": "Алматы"}} 
     }}
-    !!!JSON_END!!!
+    ```
     """
 
     try:
-        # Вызов модели (асинхронный вызов через run_in_executor или использование sync метода, 
-        # так как библиотека google-generativeai пока имеет ограниченную async поддержку, 
-        # но работает очень быстро)
         response = model.generate_content(full_prompt)
         raw_content = response.text
-        
+        print(f"DEBUG: Raw LLM response prefix: {raw_content[:100]}...")
     except Exception as e:
-        print(f"ERROR: Ошибка Google Gemini: {e}")
-        return {"text": "Произошла ошибка при обращении к нейросети. Попробуйте позже.", "action": {}}
+        print(f"ERROR: Google Gemini error: {e}")
+        return {"text": "Ошибка нейросети.", "action": {}}
 
-    # Парсинг ответа (Текст + JSON)
+    # --- ПУЛЕНЕПРОБИВАЕМЫЙ ПАРСИНГ ---
     text_part = raw_content
     action_part = {}
-    
-    if "!!!JSON_START!!!" in raw_content:
-        try:
-            parts = raw_content.split("!!!JSON_START!!!")
-            text_part = parts[0].strip()
-            
-            # Чистим хвост
-            json_str = parts[1].split("!!!JSON_END!!!")[0].strip()
-            # Иногда модель добавляет markdown ```json ... ```, уберем это
-            json_str = json_str.replace("```json", "").replace("```", "")
-            
+
+    try:
+        # 1. Ищем JSON блок с помощью регулярного выражения
+        # Ищем текст между первой { и последней }
+        json_match = re.search(r'\{.*\}', raw_content, re.DOTALL)
+        
+        if json_match:
+            json_str = json_match.group(0)
+            # Пытаемся распарсить
             action_part = json.loads(json_str)
-        except Exception as e:
-            print(f"ERROR parsing JSON from LLM: {e}")
-            pass
             
+            # Текстом считаем всё, что было ДО JSON
+            text_part = raw_content[:json_match.start()].strip()
+            # Убираем возможные остатки маркдауна в конце текста
+            text_part = text_part.replace("```json", "").replace("```", "").strip()
+        else:
+            print("WARN: JSON блок не найден в ответе")
+
+    except json.JSONDecodeError as e:
+        print(f"ERROR: Failed to parse extracted JSON: {e}")
+    except Exception as e:
+        print(f"ERROR: General parsing error: {e}")
+
     return {"text": text_part, "action": action_part}
