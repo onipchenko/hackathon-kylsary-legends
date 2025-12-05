@@ -23,6 +23,35 @@ class ChatRequest(BaseModel):
     message: str
     history: List[Any] = []
 
+class ProgramStat(BaseModel):
+    year: Optional[int] = None
+    bachelor_places: Optional[int] = None
+    master_places: Optional[int] = None
+    tuition_fee: Optional[int] = None
+    passing_score: Optional[int] = None
+
+class Program(BaseModel):
+    id: int
+    name: str
+    code: Optional[str] = None
+    category: Optional[str] = None
+    tags: Optional[List[str]] = []
+    description: Optional[str] = None
+    program_stats: List[ProgramStat] = []
+
+class UniversityDetails(BaseModel):
+    id: int
+    name_ru: str
+    name_en: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+    description: Optional[str] = None
+    hero_image_url: Optional[str] = None
+    logo_url: Optional[str] = None
+    website: Optional[str] = None
+    slug: str
+    programs: List[Program] = []
+
 # --- Эндпоинты ---
 
 @app.get("/api/universities")
@@ -76,11 +105,27 @@ def get_catalog():
             "city": uni['city'],
             "image": uni['hero_image_url'],
             "logo": uni['logo_url'],
+            "slug": uni['slug'],
             "min_price": min_price,
             "tags": list(tags)[:4] # Берем первые 4 тега
         })
         
     return result
+
+# @app.get("/api/universities/{slug}", response_model=UniversityDetails)
+@app.get("/api/universities/{slug}")
+def get_university_details(slug: str):
+    """
+    Эндпоинт для страницы одного университета.
+    """
+    response = supabase.table("universities").select(
+        "*, programs(*, program_stats(*))"
+    ).eq("slug", slug).single().execute()
+
+    if not response.data:
+        raise HTTPException(status_code=404, detail="University not found")
+
+    return response.data
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):

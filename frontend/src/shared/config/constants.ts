@@ -6,10 +6,10 @@ export type NavLink = {
 };
 
 export const navLinks: NavLink[] = [
-  { id: 'hero', label: 'Главная', action: 'scroll', target: 'hero' },
-  { id: 'features', label: 'Сервисы', action: 'scroll', target: 'features' },
-  { id: 'catalog', label: 'Каталог', action: 'route', target: 'catalog' },
-  { id: 'apply', label: 'Поступить', action: 'route', target: 3 },
+  { id: 'hero', label: 'Home', action: 'scroll', target: 'hero' },
+  { id: 'features', label: 'Features', action: 'scroll', target: 'features' },
+  { id: 'catalog', label: 'Catalog', action: 'route', target: 'catalog' },
+  { id: 'apply', label: 'Apply', action: 'route', target: 3 },
 ];
 
 export type CatalogCard = {
